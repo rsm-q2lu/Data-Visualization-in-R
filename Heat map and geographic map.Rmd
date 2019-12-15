@@ -1,0 +1,249 @@
+---
+title: "visualization"
+author: "Qiuyi Lu"
+date: "12/14/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(ggplot2)
+library(tidyverse)
+install.packages("gplots")
+library(gplots)
+library(RColorBrewer)
+library(reshape2)
+library(ggmap)
+```
+### Heat Map: 
+#### We can use heat map to see correlations among variables.<br> It's useful for selecting features when building models. For linear regression model, it can also help check multicollinearity. <br> Many bio companies use heat map to see the gene similarity among different species and could cluster species.
+
+```{r message = F, warning = F}
+data=as.matrix(mtcars)
+
+correlation <- cor(data)
+fm <- format(round(correlation, 2))
+
+color =colorRampPalette(c("yellow1","yellow2","goldenrod"))
+
+heatmap.2(correlation,
+trace="none",# not show trace average line.
+col=color,
+density.info = "none",
+key.xlab ='Correlation',
+key.title = "",
+cexRow = 1,cexCol = 1,
+Rowv = F,Colv = F, #no cluster
+margins = c(6, 6),
+cellnote = fm,notecol='black'#can use pvalue
+            )
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+  
+upper_tri <- get_upper_tri(correlation)
+upper_tri
+melted_cormat <- melt(upper_tri, na.rm = TRUE) # gather
+
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "lightblue", high = "orangered", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+# Print the heatmap
+print(ggheatmap)
+
+reorder_cormat <- function(cormat){
+# Use correlation between variables as distance
+dd <- as.dist((1-cormat)/2)
+hc <- hclust(dd)
+cormat <-cormat[hc$order, hc$order]
+}
+
+
+# Reorder the correlation matrix
+cormat <- reorder_cormat(correlation)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "skyblue", high = "orangered", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+# Print the heatmap
+print(ggheatmap)
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = round(value,2)), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+```
+
+### Geographic map
+
+#### We can use map to find the popularity of some places. If we want to set a new station, we can check where do people take a lot of activities and set points there. Rideshare companies can use it to better allocate their drivers and pricing. Travelling/local service companies can recommend the place for users.
+
+```{r message = F, warning = F}
+citibike <- readRDS('data/201508.rds') 
+
+station.info <- citibike %>%
+  group_by(start.station.id) %>%
+  summarise(lat=as.numeric(start.station.latitude[1]),
+            long=as.numeric(start.station.longitude[1]),
+            name=start.station.name[1],
+            n.trips=n())
+
+myKey <- 'AIzaSyBmNOtmsL495gnmU6IlOVNIzNS9fASiNOc'
+register_google(key = myKey, account_type = "premium", day_limit = 100000)
+
+newyork.map=get_map(location='Lower Manhattan,New York',maptype='roadmap',color='bw',source='google',zoom=13)
+
+ggmap(newyork.map)+
+  geom_point(data=station.info,aes(x=long,y=lat,color=n.trips),size=3,alpha=0.75)+
+  scale_color_gradient(high = 'red',low='lightblue')+
+  theme(axis.ticks=element_blank(),axis.text=element_blank())+
+  xlab("")+ylab("")
+
+
+#find the most popular place:
+
+top.station=station.info%>%
+        arrange(desc(n.trips))%>%
+        head(1)
+
+top.station
+
+busy.station.out =citibike %>% 
+                  filter(start.station.id==top.station$start.station.id)%>%
+  group_by(end.station.id)%>%
+  summarise(n.trips=n(),name=end.station.name[1],
+            start.lat=as.numeric(start.station.latitude)[1],
+            start.lon=as.numeric(start.station.longitude)[1],
+            end.lat=as.numeric(end.station.latitude)[1],
+            end.lon=as.numeric(end.station.longitude)[1])%>%
+  arrange(desc(n.trips))%>%
+  head(20)
+
+# find trips from the most popular place
+map_top.station=get_map(location=c(lon=top.station$long,lat=top.station$lat),color='bw',source='google',zoom=14)
+
+ggmap(map_top.station)+
+  geom_segment(data=busy.station.out,aes(x=start.lon,y=start.lat,xend=end.lon,yend=end.lat,color=n.trips),
+size=1,alpha=0.75)+
+  geom_point(data=busy.station.out,aes(x=end.lon,y=end.lat,color=n.trips),size=3,alpha=0.75)+
+  geom_point(data=top.station,aes(x=long,y=lat),size=4,alpha=0.5)+
+  scale_color_gradient(high='red',low='green')+
+  theme(axis.ticks=element_blank(),axis.text=element_blank())+
+  xlab("")+ylab("")+
+  ggtitle(paste0('Top20 Trips starting at ',top.station$name))
+  
+```
+
+
+#### World map:
+
+```{r message = F, warning = F}
+ship <- read_csv('data/CLIWOC15.csv')
+
+plot.title = 'Ship Positions by Nationality, 1750-1850'
+plot.subtitle = 'Source: Ship Log Books, https://pendientedemigracion.ucm.es/info/cliwoc/'
+
+ggplot() +   
+  borders("world", colour="gray50", fill="gray50") +
+  geom_point(data = filter(ship, Nationality %in% c('British','Dutch','Spanish','French')),
+                           mapping = aes(Lon3,Lat3,color=Nationality), alpha=0.01,size=1) +
+  ylim(-75,80)+
+  facet_wrap(~Nationality)+
+  theme(legend.position="none")+
+  ggtitle(bquote(atop(.(plot.title), atop(italic(.(plot.subtitle)), "")))) 
+
+```
+
+
+#### US MAP
+
+```{r message = F, warning = F}
+
+library(usmap)
+
+#statedonor <- table %>%
+  #filter(donor_state %in% statepop$abbr) %>%
+  #drop_na(poverty_level) %>%
+  #group_by(donor_state) %>%
+  #summarise(n=n(),total=sum(donation_total),mean=mean(donation_total))%>%
+  #rename(state=donor_state)
+
+plot_usmap(data = statepop, values = "pop_2015", color = "rosybrown1") + 
+  scale_fill_continuous(
+    low = "white", high = "salmon", name = "population(2015)", label = scales::comma
+  ) + theme(legend.position = "right")
+```
+
+#### Plotly： A dynamic map. You can put your mouse on the area and get info.
+
+```{r message = F, warning = F}
+library(plotly)
+df=statepop
+
+df$hover <- with(df, paste0(abbr, '<br>', "population",pop_2015))
+                 
+# give state boundaries a white border                
+
+l <- list(color = toRGB("white"), width = 2)
+
+# specify some map projection/options
+
+g <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showlakes = TRUE,
+  lakecolor = toRGB('white')
+)
+
+p <- plot_geo(df, locationmode = 'USA-states') %>%
+  add_trace(
+    z = ~pop_2015, text = ~hover, locations = ~abbr,
+    color = ~pop_2015, colors = 'Purples'
+  ) %>%
+  colorbar(title = "Population") %>%
+  layout(
+    title = '2011 US Agriculture Exports by State<br>(Hover for breakdown)',
+    geo = g
+  )
+p
+
+# Create a shareable link to your chart
+# Set up API credentials: https://plot.ly/r/getting-started
+#chart_link = api_create(p, filename="choropleth-ag")
+#chart_link
+
+```
